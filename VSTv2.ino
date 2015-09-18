@@ -1,51 +1,41 @@
 #include <LibAPRS.h>
-//#include <string.h>
 #include "U8glib.h"
 #include <TinyGPS++.h>
-
 
 U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE);
 TinyGPSPlus gps;
 
-unsigned int txCounter = 0; //First TX in Setup = 1!
+unsigned int txCounter = 0;
 unsigned long lastTx = 0;
-float lat = 0.00;
-float lon = 0.00;
-float speed = 0.00;
-float latitudeRadians, wayPointLatitudeRadians, longitudeRadians, wayPointLongitudeRadians;
-float distanceToWaypoint, bearing, deltaLatitudeRadians, deltaLongitudeRadians;
-const float pi = 3.14159265;
-const int radiusOfEarth = 6371; // in km
 char nw, wl;
 boolean gotPacket = false;
 AX25Msg incomingPacket;
 uint8_t *packetData;
-float lastTxLat = lat;
-float lastTxLng = lon;
+float lastTxLat = 0.00;
+float lastTxLng = 0.00;
 float lastTxdistance = 0.0;
 int previousHeading = 400;
 int lastbearing = 0;
 int headingDelta, lastheadingDelta = 0;
 byte hour = 0, minute = 0, second = 0;
 unsigned long secondtimer = 0;
+unsigned long timer = 0;
+boolean paket = false;
+int buttonState = 0;
+const int buttonPin = 8;
 
 #define ADC_REFERENCE REF_3V3
-// OR
-//#define ADC_REFERENCE REF_5V
+#define OPEN_SQUELCH true
 
-// You can also define whether your modem will be
-// running with an open squelch radio:
-#define OPEN_SQUELCH false
-
-
-void setup() 
+void setup()
 {
+  pinMode(buttonPin, INPUT);
   Serial.begin(9600);
-  Serial.println("AT+DMOSETGROUP=0,144.8000,144.8000,0000,0,0000");
+  Serial.println(F("AT+DMOSETGROUP=0,144.8000,144.8000,0000,0,0000"));
   delay(100);
-  Serial.println("AT+DMOSETVOLUME=8");
+  Serial.println(F("AT+DMOSETVOLUME=8"));
   delay(100);
-  Serial.println("AT+SETFILTER=0,0,0");
+  Serial.println(F("AT+SETFILTER=0,0,0"));
   delay(100);
   // Initialise APRS library - This starts the modem
   APRS_init(ADC_REFERENCE, OPEN_SQUELCH);
@@ -54,32 +44,20 @@ void setup()
   APRS_setDestination("APMT01", 0);
   APRS_setPath1("WIDE1", 1);
   APRS_setPath2("WIDE2", 1);
-  APRS_setPreamble(750);
+  APRS_setPreamble(1000);
   APRS_setTail(150);
 }
 
- void aprs_msg_callback(struct AX25Msg *msg)
+void aprs_msg_callback(struct AX25Msg *msg)
 {
   if (!gotPacket)
   {
     gotPacket = true;
     memcpy(&incomingPacket, msg, sizeof(AX25Msg));
-
-    if (freeMemory() > msg->len)
-    {
-      packetData = (uint8_t*)malloc(msg->len);
-      memcpy(packetData, msg->info, msg->len);
-      incomingPacket.info = packetData;
-    }
-    else
-    {
-      gotPacket = false;
-    }
   }
 }
 
-
-void loop() 
+void loop()
 {
   if (millis() - secondtimer >= 1000)
   {
@@ -116,20 +94,17 @@ void loop()
   ///////////////// Triggered by location updates ///////////////////////
   if ( gps.location.isUpdated() )
   {
-    speed = gps.speed.kmph();
-    lat = gps.location.lat();
-    lon = gps.location.lng();
     lastTxdistance = TinyGPSPlus::distanceBetween(
-                       lat,
-                       lon,
+                       gps.location.lat(),
+                       gps.location.lng(),
                        lastTxLat,
                        lastTxLng);
 
     lastbearing = (int)TinyGPSPlus::courseTo(
                     lastTxLat,
                     lastTxLng,
-                    lat,
-                    lon);
+                    gps.location.lat(),
+                    gps.location.lng());
 
     nw = gps.location.rawLat().negative ? 'S' : 'N';
     wl = gps.location.rawLng().negative ? 'W' : 'E';
@@ -149,13 +124,10 @@ void loop()
 
   } // endof gps.location.isUpdated()
 
-
-  float Volt = (float) readVcc() / 1000;
-
   long latt, lonn;
 
-  lonn = (lon * 100000) + 18000000; // Step 1
-  latt = (lat * 100000) + 9000000; // Adjust so Locn AA is at the pole
+  lonn = (gps.location.lng() * 100000) + 18000000; // Step 1
+  latt = (gps.location.lat() * 100000) + 9000000; // Adjust so Locn AA is at the pole
   char MH[6] = {'A', 'A', '0', '0', 'a', 'a'}; // Initialise our print string
   MH[0] += lonn / 2000000; // Field
   MH[1] += latt / 1000000;
@@ -171,72 +143,87 @@ void loop()
     i++;
   }
 
-  
-  if (!gotPacket)
+  buttonState = digitalRead(buttonPin);
+  if (gotPacket)
+  {
+    paket = true;
+  }
+  if (paket == true)
+  {
+    if (gotPacket) {
+      gotPacket = false;
+      u8g.firstPage();
+      do
+      {
+        u8g.setFont(u8g_font_5x8);
+        u8g.setPrintPos(0, 9);
+        printTime();
+        
+        u8g.setPrintPos(60, 9);
+        u8g.print(incomingPacket.src.call);
+        if (incomingPacket.src.ssid > 0)
+        {
+          u8g.print(F("-"));
+          u8g.print(incomingPacket.src.ssid);
+        } 
+        u8g.setPrintPos(0, 27);
+        for (int i = 1; i < incomingPacket.len; i++)
+        {
+          u8g.print(char(incomingPacket.info[i]));
+          if (i == 23)
+          {
+            u8g.setPrintPos(0, 36);
+          }
+          if (i == 46)
+          {
+            u8g.setPrintPos(0, 45);
+          }
+          if (i == 69)
+          {
+            u8g.setPrintPos(0, 54);
+          }
+          if (i == 92)
+          {
+            u8g.setPrintPos(0, 63);
+          }
+        }
+      }
+      while ( u8g.nextPage() );
+    }
+  }
+  else
   {
     u8g.firstPage();
     do
     {
       u8g.setFont(u8g_font_6x10);
-      u8g.setPrintPos(0, 13);
+      u8g.setPrintPos(0, 12);
       printTime();
-
-      u8g.setPrintPos(60, 13);
-      u8g.print(F("Volts: "));
-      u8g.print(Volt);
-      u8g.setPrintPos(0, 26);
+      u8g.setPrintPos(60, 12);
+     // u8g.print(F("Volts: "));
+     // u8g.print(result1);
+      u8g.setPrintPos(0, 24);
       u8g.print(F("SAT's: "));
       u8g.print(gps.satellites.value());
-      u8g.setPrintPos(60, 26);
-      u8g.print(speed, 0);
-      u8g.print(F(" Km/H"));
-      u8g.setPrintPos(0, 39);
+      u8g.setPrintPos(60, 24);
+     // u8g.print(gps.speed.kmph(), 2);
+     // u8g.print(F(" Km/H"));
+      u8g.setPrintPos(0, 36);
       u8g.print(F("LAT: "));
-      u8g.print(lat);
-      u8g.setPrintPos(60, 39);
+      u8g.print(gps.location.lat(), 6);
+      u8g.setPrintPos(0, 48);
       u8g.print(F("LON: "));
-      u8g.print(lon);
-         
-      u8g.setPrintPos(31, 59);
-      //u8g.setFont(u8g_font_10x20);
+      u8g.print(gps.location.lng(), 6);
+      u8g.setPrintPos(0, 60);
+      u8g.print(F("LOCATOR: "));
       u8g.print(MH_txt);
     }
     while ( u8g.nextPage() );
   }
-  
-  else
+
+  if (buttonState == HIGH)
   {
-    gotPacket = false;
-    //message was received
-    u8g.firstPage();
-    do
-    {
-      u8g.setPrintPos(0, 9);
-      u8g.print(F("S: "));
-      u8g.print(incomingPacket.src.call);
-      u8g.print(F("-"));
-      u8g.print(incomingPacket.src.ssid);
-      u8g.setPrintPos(75, 9);
-      u8g.print(F("R: "));
-      u8g.print(incomingPacket.dst.call);
-      u8g.print(F("-"));
-      u8g.print(incomingPacket.dst.ssid);
-      int h = 18;
-      int n = 0;
-      u8g.setPrintPos(0, h);
-      for (int i = 0; i < incomingPacket.len; i++)
-      {
-        if (n == 24) {
-          h = h + 9;
-          n = 0;
-          u8g.setPrintPos(0, h);
-        }
-        u8g.print(incomingPacket.info[i]);
-        n++;
-      }
-      delay(5000);
-      free(packetData);
-    } while (u8g.nextPage());
+    paket = false;
   }
 
   ////////////////////////////////////////////////////////////////////////////////////
@@ -274,17 +261,21 @@ void loop()
 
 void TxtoRadio()
 {
+  // Only send status/version every 10 packets to save packet size
+  if ( txCounter % 10 == 0 )
+  {
+     char *message = ">Micro APRS Tracker by LZ1PPL";
+    APRS_sendStat(message, strlen(message));
+    APRS_sendStat(message, strlen(message));
+  }
+  else {
     char latOut[15], lngOutTmp[15];
     float latDegMin, lngDegMin = 0.0;
-
-
-    latDegMin = convertDegMin(lat);
-    lngDegMin = convertDegMin(lon);
-
+    latDegMin = convertDegMin(gps.location.lat());
+    lngDegMin = convertDegMin(gps.location.lng());
     dtostrf(latDegMin, 2, 2, latOut );
-   
     dtostrf(lngDegMin, 2, 2, lngOutTmp );
-   
+
     char lngOut[15] = {
     };
     int cur_len = strlen(latOut);
@@ -294,14 +285,11 @@ void TxtoRadio()
     if (lngDegMin < 10000)
     {
       int n = strlen(lngOutTmp);
-
       lngOut[0] = '0';
-
       for (int i = 1; i < n + 1; i++)
       {
         lngOut[i] = lngOutTmp[i - 1];
       }
-
       cur_len = strlen(lngOut);
       lngOut[cur_len] = '\0';
     }
@@ -312,82 +300,31 @@ void TxtoRadio()
     lngOut[cur_len] = wl;
     lngOut[cur_len + 1] = '\0';
 
-    // And send the update
-
     APRS_setLat(latOut);
     APRS_setLon(lngOut);
-    
-  // And send the update
-  int iiii = txCounter;
-  char strii[10];
-  sprintf(strii, "%d", iiii);
+ 
+    int iiii = txCounter;
+    char strii[10];
+    sprintf(strii, "%d", iiii);
+    char *comment = strii;
 
-  char *comment = strii;
-  
-  APRS_setPower(1);
-  APRS_setHeight(0);
-  APRS_setGain(3);
-  APRS_setDirectivity(0);
-  
-  APRS_sendLoc(comment, strlen(comment));
-  
-      // Reset the Tx internal
-    lastTxdistance = 0;   // Ensure this value is zero before the next Tx
-    lastTxLat = lat;
-    lastTxLng = lon;
+    APRS_setPower(1);
+    APRS_setHeight(0);
+    APRS_setGain(3);
+    APRS_setDirectivity(0);
+
+    APRS_sendLoc(comment, strlen(comment));
+    APRS_sendLoc(comment, strlen(comment));
+
+    // Reset the Tx internal
+    lastTxdistance = 0;
+    lastTxLat = gps.location.lat();
+    lastTxLng = gps.location.lng();
     previousHeading = lastbearing;
-    lastTx = millis();
-    txCounter++;
-
+  }
+  lastTx = millis();
+  txCounter++;
 } // endof TxtoRadio()
-
-void processPacket()
-{
-  if (gotPacket)
-  {
-    gotPacket = false;
-    free(packetData);
-  }
-}
-
-// convert degrees to radians
-void radianConversion()
-{
-  float wayPointLatitude, wayPointLongitude;
-
-  deltaLatitudeRadians = (wayPointLatitude - lat) * pi / 180;
-  deltaLongitudeRadians = (wayPointLongitude - lon) * pi / 180;
-  latitudeRadians = lat * pi / 180;
-  wayPointLatitudeRadians = wayPointLatitude * pi / 180;
-  longitudeRadians = lon * pi / 180;
-  wayPointLongitudeRadians = wayPointLongitude * pi / 180;
-}
-// calculate distance from present location to next way point
-float calculateDistance()
-{
-  radianConversion();
-  float a = sin(deltaLatitudeRadians / 2) * sin(deltaLatitudeRadians / 2) +
-            sin(deltaLongitudeRadians / 2) * sin(deltaLongitudeRadians / 2) *
-            cos(latitudeRadians) * cos(wayPointLatitudeRadians);
-  float c = 2 * atan2(sqrt(a), sqrt(1 - a));
-  float d = radiusOfEarth * c;
-  return d * 1;                  // distance in kilometers
-}
-
-// calculate bearing from present location to next way point
-float calculateBearing()
-{
-  radianConversion();
-  float y = sin(deltaLongitudeRadians) * cos(wayPointLatitudeRadians);
-  float x = cos(latitudeRadians) * sin(wayPointLatitudeRadians) -
-            sin(latitudeRadians) * cos(wayPointLatitudeRadians) * cos(deltaLongitudeRadians);
-  bearing = atan2(y, x) / pi * 180;
-  if (bearing < 0)
-  {
-    bearing = 360 + bearing;
-  }
-  return bearing;
-}
 
 float convertDegMin(float decDeg)
 {
@@ -412,18 +349,4 @@ static void printTime()
   if (second < 10)
     u8g.print(F("0"));
   u8g.print(second);
-}
-
-int readVcc()
-{
-  int result;
-  // Read 1.1V reference against AVcc
-  ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-  delay(2);                     // Wait for Vref to settle
-  ADCSRA |= _BV(ADSC); // Convert
-  while (bit_is_set(ADCSRA, ADSC));
-  result = ADCL;
-  result |= ADCH << 8;
-  result = 1126400L / result; // Back-calculate AVcc in mV
-  return result;
 }
