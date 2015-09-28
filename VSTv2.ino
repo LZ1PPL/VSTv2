@@ -35,7 +35,7 @@ void setup()
   delay(100);
   Serial.println(F("AT+DMOSETVOLUME=8"));
   delay(100);
-  Serial.println(F("AT+SETFILTER=0,0,0"));
+  Serial.println(F("AT+SETFILTER=1,1,1"));
   delay(100);
   // Initialise APRS library - This starts the modem
   APRS_init(ADC_REFERENCE, OPEN_SQUELCH);
