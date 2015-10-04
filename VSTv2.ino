@@ -261,14 +261,6 @@ void loop()
 
 void TxtoRadio()
 {
-  // Only send status/version every 10 packets to save packet size
-  if ( txCounter % 10 == 0 )
-  {
-     char *message = ">Micro APRS Tracker by LZ1PPL";
-    APRS_sendStat(message, strlen(message));
-    APRS_sendStat(message, strlen(message));
-  }
-  else {
     char latOut[15], lngOutTmp[15];
     float latDegMin, lngDegMin = 0.0;
     latDegMin = convertDegMin(gps.location.lat());
@@ -321,7 +313,6 @@ void TxtoRadio()
     lastTxLat = gps.location.lat();
     lastTxLng = gps.location.lng();
     previousHeading = lastbearing;
-  }
   lastTx = millis();
   txCounter++;
 } // endof TxtoRadio()
